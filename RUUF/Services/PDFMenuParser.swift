@@ -151,22 +151,59 @@ private extension PDFMenuParser {
     }
 
     func extractDayColumns(from lines: [PDFLine]) throws -> [DayColumn] {
-        let headerLines = lines
-            .filter { $0.y > 430 && weekday(from: $0.text) != nil }
-            .sorted { $0.centerX < $1.centerX }
+        let weekdayCandidates: [(line: PDFLine, day: Weekday)] = lines.compactMap { line in
+            guard let day = weekday(from: line.text) else { return nil }
+            let normalized = line.text.normalizedForMatching()
 
-        guard headerLines.count >= 11 else {
+            // Ignorar trechos de horário de funcionamento, que também contêm "2ª a 6ª feira".
+            if normalized.contains("de 2") || normalized.contains("sabado fechado") {
+                return nil
+            }
+
+            return (line, day)
+        }
+
+        guard !weekdayCandidates.isEmpty else {
             throw PDFMenuParserError.missingDayColumns
         }
 
-        let dayOrder = Array(headerLines.prefix(11)).compactMap { weekday(from: $0.text) }
-        guard dayOrder.count == 11 else {
+        let groupedByYBand = Dictionary(grouping: weekdayCandidates) { candidate in
+            Int((candidate.line.y / 4).rounded())
+        }
+
+        guard
+            let bestBand = groupedByYBand.max(by: { $0.value.count < $1.value.count })?.value,
+            bestBand.count >= 10
+        else {
             throw PDFMenuParserError.missingDayColumns
         }
 
-        return dayOrder.enumerated().map { index, day in
+        let referenceY = bestBand.map(\.line.y).reduce(0, +) / CGFloat(bestBand.count)
+        let alignedHeaders = weekdayCandidates
+            .filter { abs($0.line.y - referenceY) <= 6 }
+            .sorted { $0.line.centerX < $1.line.centerX }
+
+        guard alignedHeaders.count >= 10 else {
+            throw PDFMenuParserError.missingDayColumns
+        }
+
+        let normalizedHeaders: [(line: PDFLine, day: Weekday)] = {
+            if alignedHeaders.count >= 11 {
+                return Array(alignedHeaders.prefix(11))
+            }
+            return Array(alignedHeaders.prefix(10))
+        }()
+
+        if normalizedHeaders.count == 10 {
+            return normalizedHeaders.enumerated().map { index, header in
+                let meal: DayColumn.Meal = index < 5 ? .almoco : .jantar
+                return DayColumn(index: index, day: header.day, meal: meal, centerX: header.line.centerX)
+            }
+        }
+
+        return normalizedHeaders.enumerated().map { index, header in
             let meal: DayColumn.Meal = index < 6 ? .almoco : .jantar
-            return DayColumn(index: index, day: day, meal: meal, centerX: headerLines[index].centerX)
+            return DayColumn(index: index, day: header.day, meal: meal, centerX: header.line.centerX)
         }
     }
 
@@ -338,17 +375,25 @@ private extension PDFMenuParser {
     }
 
     func extractPeriodLabel(from text: String) -> String {
-        let pattern = #"(?i)CARD[ÁA]PIO\s+SEMANAL\s+DE\s+([^\n]+)"#
+        let patterns = [
+            #"(?i)CARD[ÁA]PIO\s+SEMANAL\s+DE\s+([^\n]+)"#,
+            #"(?i)CARD[ÁA]PIO\s+SEMANAL\s*[–\-:]\s*([^\n]+)"#
+        ]
 
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
-              let range = Range(match.range(at: 1), in: text) else {
-            return "Período não identificado"
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
+                  let range = Range(match.range(at: 1), in: text) else {
+                continue
+            }
+
+            return text[range]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .replacingOccurrences(of: #"^DE\s+"#, with: "", options: .regularExpression)
+                .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
         }
 
-        return text[range]
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
+        return "Período não identificado"
     }
 
     func normalizeRawText(_ text: String) -> String {

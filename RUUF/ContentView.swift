@@ -18,7 +18,6 @@ struct ContentView: View {
                     headerCard
                     infoCard
                     modeSelector
-                    linksCard
 
                     if viewModel.isLoading {
                         loadingCard
@@ -61,15 +60,7 @@ struct ContentView: View {
                     .font(.system(size: 20, weight: .bold, design: .rounded))
                     .foregroundStyle(.black)
 
-                Text("Teresina • Picos • Floriano • Bom Jesus")
-                    .font(.system(size: 14, weight: .bold, design: .rounded))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(neoSecondary)
-                    .overlay(
-                        Rectangle().stroke(.black, lineWidth: 3)
-                    )
+                campusSelector
             }
         }
         .rotationEffect(.degrees(-1.2))
@@ -86,13 +77,52 @@ struct ContentView: View {
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.black)
                 Button {
-                    Task { await viewModel.load() }
+                    Task { await viewModel.reloadCurrentCampus() }
                 } label: {
                     labelButton(title: "Atualizar agora", background: neoSecondary)
                 }
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private var campusSelector: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Campus")
+                .font(.system(size: 13, weight: .black, design: .rounded))
+                .foregroundStyle(.black)
+                .textCase(.uppercase)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                ForEach(Campus.allCases) { campus in
+                    let isSelected = viewModel.selectedCampus == campus
+                    Button {
+                        Task { await viewModel.selectCampus(campus) }
+                    } label: {
+                        HStack(spacing: 6) {
+                            if isSelected {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.system(size: 12, weight: .black))
+                            }
+                            Text(campus.rawValue.uppercased())
+                                .font(.system(size: 11, weight: .black, design: .rounded))
+                                .foregroundStyle(.black)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.75)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 7)
+                        .background(isSelected ? neoAccent : .white)
+                        .overlay(Rectangle().stroke(.black, lineWidth: isSelected ? 3 : 2))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(10)
+        .background(neoSecondary)
+        .overlay(Rectangle().stroke(.black, lineWidth: 3))
     }
 
     private var modeSelector: some View {
@@ -115,39 +145,6 @@ struct ContentView: View {
                         )
                 }
                 .buttonStyle(.plain)
-            }
-        }
-    }
-
-    private var linksCard: some View {
-        neoCard(background: .white) {
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Links detectados")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
-                    .foregroundStyle(.black)
-                    .textCase(.uppercase)
-
-                ForEach(Campus.allCases) { campus in
-                    HStack {
-                        Text(campus.rawValue)
-                            .font(.system(size: 15, weight: .bold, design: .rounded))
-                            .foregroundStyle(.black)
-                        Spacer()
-                        if let url = viewModel.campusLinks[campus] {
-                            Link("PDF", destination: url)
-                                .font(.system(size: 13, weight: .black, design: .rounded))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(neoSecondary)
-                                .overlay(Rectangle().stroke(.black, lineWidth: 2))
-                        } else {
-                            Text("-")
-                                .font(.system(size: 14, weight: .bold, design: .rounded))
-                                .foregroundStyle(.black)
-                        }
-                    }
-                }
             }
         }
     }
@@ -187,9 +184,10 @@ struct ContentView: View {
     private func menuHeaderCard(_ menu: WeeklyMenu) -> some View {
         neoCard(background: neoSecondary) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Teresina • \(menu.periodLabel)")
+                Text("\(menu.campus.rawValue) • \(menu.periodLabel)")
                     .font(.system(size: 18, weight: .black, design: .rounded))
                     .foregroundStyle(.black)
+                    .textCase(.uppercase)
                 Link(destination: menu.sourceURL) {
                     Text("Abrir PDF original")
                         .font(.system(size: 14, weight: .black, design: .rounded))
