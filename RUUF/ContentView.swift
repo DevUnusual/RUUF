@@ -204,17 +204,78 @@ struct ContentView: View {
     }
 
     private func rawMenuCard(_ menu: WeeklyMenu) -> some View {
-        neoCard(background: .white) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Cardápio geral")
-                    .font(.system(size: 16, weight: .black, design: .rounded))
-                    .foregroundStyle(.black)
-                    .textCase(.uppercase)
+        VStack(alignment: .leading, spacing: 12) {
+            neoCard(background: .white) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Cardápio geral estruturado")
+                        .font(.system(size: 16, weight: .black, design: .rounded))
+                        .foregroundStyle(.black)
+                        .textCase(.uppercase)
 
-                Text(menu.rawText)
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    Text("Resumo semanal organizado por dia, turno e categoria.")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black)
+                }
+            }
+
+            ForEach(menu.dailyMenus) { daily in
+                weeklyDaySummaryCard(daily)
+            }
+        }
+    }
+
+    private func weeklyDaySummaryCard(_ daily: DailyMenu) -> some View {
+        neoCard(background: daily.day == .sabado ? neoMuted : .white) {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(daily.day.title.uppercased())
+                    .font(.system(size: 17, weight: .black, design: .rounded))
                     .foregroundStyle(.black)
-                    .textSelection(.enabled)
+
+                Rectangle()
+                    .fill(.black)
+                    .frame(height: 2)
+
+                weeklyMealSummarySection(title: "Almoço", meal: daily.lunch)
+
+                if let dinner = daily.dinner {
+                    weeklyMealSummarySection(title: "Jantar", meal: dinner)
+                } else {
+                    Text("Jantar: não disponível neste dia.")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(.black)
+                }
+            }
+        }
+    }
+
+    private func weeklyMealSummarySection(title: String, meal: MealMenu) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title.uppercased())
+                .font(.system(size: 14, weight: .black, design: .rounded))
+                .foregroundStyle(.black)
+
+            let available = MenuCategory.ordered.filter { !meal.items(for: $0).isEmpty }
+
+            if available.isEmpty {
+                Text("Sem itens estruturados para este turno.")
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(.black)
+            } else {
+                ForEach(available) { category in
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(category.rawValue)
+                            .font(.system(size: 12, weight: .black, design: .rounded))
+                            .foregroundStyle(.black)
+                            .textCase(.uppercase)
+
+                        Text(meal.items(for: category).joined(separator: " • "))
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.black)
+                    }
+                    .padding(8)
+                    .background(.white.opacity(0.7))
+                    .overlay(Rectangle().stroke(.black, lineWidth: 2))
+                }
             }
         }
     }
