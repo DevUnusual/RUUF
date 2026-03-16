@@ -197,12 +197,20 @@ struct ContentView: View {
                         .background(.white)
                         .overlay(Rectangle().stroke(.black, lineWidth: 3))
                 }
+
+                if menu.isOutdated {
+                    staleWarningBlock(message: staleWarningMessage(for: menu))
+                }
             }
         }
     }
 
     private func rawMenuCard(_ menu: WeeklyMenu) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            if menu.isOutdated {
+                staleWarningBlock(message: staleWarningMessage(for: menu))
+            }
+
             neoCard(background: .white) {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Cardápio geral estruturado")
@@ -217,17 +225,23 @@ struct ContentView: View {
             }
 
             ForEach(menu.dailyMenus) { daily in
-                weeklyDaySummaryCard(daily)
+                weeklyDaySummaryCard(daily, isOutdated: menu.isOutdated)
             }
         }
     }
 
-    private func weeklyDaySummaryCard(_ daily: DailyMenu) -> some View {
+    private func weeklyDaySummaryCard(_ daily: DailyMenu, isOutdated: Bool) -> some View {
         neoCard(background: daily.day == .sabado ? neoMuted : .white) {
             VStack(alignment: .leading, spacing: 10) {
-                Text(daily.day.title.uppercased())
-                    .font(.system(size: 17, weight: .black, design: .rounded))
-                    .foregroundStyle(.black)
+                HStack(spacing: 8) {
+                    Text(daily.day.title.uppercased())
+                        .font(.system(size: 17, weight: .black, design: .rounded))
+                        .foregroundStyle(.black)
+
+                    if isOutdated {
+                        staleSquare(size: 14)
+                    }
+                }
 
                 Rectangle()
                     .fill(.black)
@@ -280,6 +294,10 @@ struct ContentView: View {
 
     private func dailyMenuSection(_ menu: WeeklyMenu) -> some View {
         VStack(alignment: .leading, spacing: 14) {
+            if menu.isOutdated {
+                staleWarningBlock(message: staleWarningMessage(for: menu))
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(menu.dailyMenus) { daily in
@@ -299,6 +317,12 @@ struct ContentView: View {
                                         shadowOffset: 4
                                     )
                                 )
+                                .overlay(alignment: .topTrailing) {
+                                    if menu.isOutdated {
+                                        staleSquare(size: 12)
+                                            .offset(x: 3, y: -3)
+                                    }
+                                }
                         }
                         .buttonStyle(.plain)
                     }
@@ -399,6 +423,41 @@ struct ContentView: View {
             .fill(color)
             .overlay(Rectangle().stroke(.black, lineWidth: borderWidth))
             .shadow(color: .black, radius: 0, x: shadowOffset, y: shadowOffset)
+    }
+
+    private func staleWarningBlock(message: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            staleSquare(size: 18)
+
+            Text(message.uppercased())
+                .font(.system(size: 12, weight: .black, design: .rounded))
+                .foregroundStyle(.black)
+        }
+        .padding(10)
+        .background(Color(red: 1, green: 0.56, blue: 0.56))
+        .overlay(Rectangle().stroke(.black, lineWidth: 3))
+    }
+
+    private func staleSquare(size: CGFloat) -> some View {
+        Rectangle()
+            .fill(.red)
+            .frame(width: size, height: size)
+            .overlay(Rectangle().stroke(.black, lineWidth: 2))
+    }
+
+    private func staleWarningMessage(for menu: WeeklyMenu) -> String {
+        guard let endDate = menu.periodEndDate else {
+            return "Cardápio desatualizado."
+        }
+
+        return "Cardápio desatualizado. Período encerrou em \(formatted(date: endDate))."
+    }
+
+    private func formatted(date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pt_BR")
+        formatter.dateFormat = "dd/MM/yyyy"
+        return formatter.string(from: date)
     }
 }
 

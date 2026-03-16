@@ -86,8 +86,16 @@ struct WeeklyMenu: Equatable {
     let campus: Campus
     let sourceURL: URL
     let periodLabel: String
+    let periodStartDate: Date?
+    let periodEndDate: Date?
     let rawText: String
     let dailyMenus: [DailyMenu]
+
+    var isOutdated: Bool {
+        guard let periodEndDate else { return false }
+        let calendar = Calendar.current
+        return calendar.startOfDay(for: periodEndDate) < calendar.startOfDay(for: Date())
+    }
 }
 
 enum MenuDisplayMode: String, CaseIterable, Identifiable {

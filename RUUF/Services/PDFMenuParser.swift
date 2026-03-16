@@ -34,9 +34,15 @@ final class PDFMenuParser {
         let categoryAnchors = extractCategoryAnchors(from: lines, firstColumnCenterX: columns[0].centerX)
 
         var bucket: [ColumnKey: [MenuCategory: [PDFLine]]] = [:]
+        let dayHeaderY = columns.map(\.headerY).max() ?? .greatestFiniteMagnitude
 
         for line in lines {
-            guard isCandidateTableLine(line, firstColumnCenterX: columns[0].centerX, anchors: categoryAnchors) else {
+            guard isCandidateTableLine(
+                line,
+                firstColumnCenterX: columns[0].centerX,
+                anchors: categoryAnchors,
+                dayHeaderY: dayHeaderY
+            ) else {
                 continue
             }
 
@@ -80,10 +86,15 @@ final class PDFMenuParser {
             return DailyMenu(day: day, lunch: MealMenu(itemsByCategory: accumulator.lunch), dinner: dinnerMenu)
         }
 
+        let periodLabel = extractPeriodLabel(from: rawText)
+        let periodBounds = extractPeriodBounds(from: periodLabel)
+
         return WeeklyMenu(
             campus: campus,
             sourceURL: sourceURL,
-            periodLabel: extractPeriodLabel(from: rawText),
+            periodLabel: periodLabel,
+            periodStartDate: periodBounds.start,
+            periodEndDate: periodBounds.end,
             rawText: normalizeRawText(rawText),
             dailyMenus: dailyMenus
         )
@@ -110,6 +121,7 @@ private extension PDFMenuParser {
         let day: Weekday
         let meal: Meal
         let centerX: CGFloat
+        let headerY: CGFloat
     }
 
     struct CategoryAnchor {
@@ -197,13 +209,25 @@ private extension PDFMenuParser {
         if normalizedHeaders.count == 10 {
             return normalizedHeaders.enumerated().map { index, header in
                 let meal: DayColumn.Meal = index < 5 ? .almoco : .jantar
-                return DayColumn(index: index, day: header.day, meal: meal, centerX: header.line.centerX)
+                return DayColumn(
+                    index: index,
+                    day: header.day,
+                    meal: meal,
+                    centerX: header.line.centerX,
+                    headerY: header.line.y
+                )
             }
         }
 
         return normalizedHeaders.enumerated().map { index, header in
             let meal: DayColumn.Meal = index < 6 ? .almoco : .jantar
-            return DayColumn(index: index, day: header.day, meal: meal, centerX: header.line.centerX)
+            return DayColumn(
+                index: index,
+                day: header.day,
+                meal: meal,
+                centerX: header.line.centerX,
+                headerY: header.line.y
+            )
         }
     }
 
@@ -212,45 +236,94 @@ private extension PDFMenuParser {
 
         let saladaY = leftLines.first(where: { $0.text.normalizedForMatching() == "salada" })?.y ?? 440
         let pratoY = leftLines
-            .filter { ["prato", "principal"].contains($0.text.normalizedForMatching()) }
+            .filter {
+                let normalized = $0.text.normalizedForMatching()
+                return normalized == "prato" || normalized == "principal" || normalized.contains("prato principal")
+            }
             .map(\.y)
             .max() ?? 380
         let guarnicaoY = leftLines.first(where: { $0.text.normalizedForMatching() == "guarnicao" })?.y ?? 322
-        let acompanhamentoY = leftLines.first(where: { $0.text.normalizedForMatching() == "acompanhamento" })?.y ?? 295
+        let acompanhamentoY = leftLines.first(where: { $0.text.normalizedForMatching().hasPrefix("acompanhamento") })?.y ?? 295
         let sobremesaY = leftLines.first(where: { $0.text.normalizedForMatching() == "sobremesa" })?.y ?? 260
-        let sucoY = leftLines.first(where: { $0.text.normalizedForMatching().hasPrefix("suco") })?.y ?? 232
-
-        return [
+        var anchors: [CategoryAnchor] = [
             CategoryAnchor(category: .salada, y: saladaY),
             CategoryAnchor(category: .pratoPrincipal, y: pratoY),
             CategoryAnchor(category: .guarnicao, y: guarnicaoY),
             CategoryAnchor(category: .acompanhamento, y: acompanhamentoY),
-            CategoryAnchor(category: .sobremesa, y: sobremesaY),
-            CategoryAnchor(category: .suco, y: sucoY)
+            CategoryAnchor(category: .sobremesa, y: sobremesaY)
         ]
+
+        if let sucoY = leftLines.first(where: { $0.text.normalizedForMatching().hasPrefix("suco") })?.y {
+            anchors.append(CategoryAnchor(category: .suco, y: sucoY))
+        }
+
+        return anchors
     }
 
     func category(for y: CGFloat, anchors: [CategoryAnchor]) -> MenuCategory? {
-        let pratoY = anchors.first(where: { $0.category == .pratoPrincipal })?.y ?? 380
-        let guarnicaoY = anchors.first(where: { $0.category == .guarnicao })?.y ?? 322
-        let acompanhamentoY = anchors.first(where: { $0.category == .acompanhamento })?.y ?? 295
-        let sobremesaY = anchors.first(where: { $0.category == .sobremesa })?.y ?? 260
-        let sucoY = anchors.first(where: { $0.category == .suco })?.y ?? 232
+        let map = Dictionary(uniqueKeysWithValues: anchors.map { ($0.category, $0.y) })
 
-        if y > pratoY + 35 { return .salada }
-        if y > guarnicaoY + 18 { return .pratoPrincipal }
-        if y > acompanhamentoY + 14 { return .guarnicao }
-        if y > sobremesaY + 12 { return .acompanhamento }
-        if y > sucoY + 12 { return .sobremesa }
-        return .suco
+        guard
+            let saladaY = map[.salada],
+            let pratoY = map[.pratoPrincipal],
+            let guarnicaoY = map[.guarnicao],
+            let acompanhamentoY = map[.acompanhamento],
+            let sobremesaY = map[.sobremesa]
+        else {
+            return nil
+        }
+
+        // Em alguns PDFs (ex: Bom Jesus) o rótulo "Prato Principal" aparece abaixo dos itens.
+        // Por isso, limitar salada por proximidade à âncora de salada, não pelo ponto médio simples.
+        let saladaToPratoDistance = max(0, saladaY - pratoY)
+        let saladaBoundary = saladaY - max(6, saladaToPratoDistance * 0.30)
+        if y >= saladaBoundary {
+            return .salada
+        }
+
+        // Prato costuma ocupar mais altura e pode quebrar em múltiplas linhas até perto da guarnição.
+        let pratoBoundary = guarnicaoY + ((pratoY - guarnicaoY) * 0.35)
+        if y > pratoBoundary {
+            return .pratoPrincipal
+        }
+
+        let guarnicaoBoundary = (guarnicaoY + acompanhamentoY) / 2
+        if y > guarnicaoBoundary {
+            return .guarnicao
+        }
+
+        let acompanhamentoBoundary = (acompanhamentoY + sobremesaY) / 2
+        if y > acompanhamentoBoundary {
+            return .acompanhamento
+        }
+
+        if let sucoY = map[.suco] {
+            let sobremesaBoundary = (sobremesaY + sucoY) / 2
+            if y > sobremesaBoundary {
+                return .sobremesa
+            }
+            return .suco
+        }
+
+        return .sobremesa
     }
 
     func nearestDayColumn(for centerX: CGFloat, columns: [DayColumn]) -> DayColumn {
         columns.min(by: { abs($0.centerX - centerX) < abs($1.centerX - centerX) }) ?? columns[0]
     }
 
-    func isCandidateTableLine(_ line: PDFLine, firstColumnCenterX: CGFloat, anchors: [CategoryAnchor]) -> Bool {
+    func isCandidateTableLine(
+        _ line: PDFLine,
+        firstColumnCenterX: CGFloat,
+        anchors: [CategoryAnchor],
+        dayHeaderY: CGFloat
+    ) -> Bool {
         guard line.x > firstColumnCenterX - 40 else {
+            return false
+        }
+
+        // Impede que rótulos "2ª Feira", "3ª Feira"... sejam tratados como comida.
+        guard line.y < dayHeaderY - 6 else {
             return false
         }
 
@@ -269,7 +342,7 @@ private extension PDFMenuParser {
         }
 
         let blockedTokens = [
-            "almoco", "jantar", "estrutura do", "cardapio", "salada", "prato", "principal",
+            "almoco", "jantar", "estrutura do", "cardapio", "prato", "principal",
             "guarnicao", "acompanhamento", "sobremesa", "suco"
         ]
 
@@ -320,7 +393,7 @@ private extension PDFMenuParser {
 
             let verticalGap = abs(last.y - line.y)
             let horizontalGap = abs(last.x - line.x)
-            let shouldMerge = verticalGap <= 10.5 && horizontalGap <= 22
+            let shouldMerge = verticalGap <= 12.5 && horizontalGap <= 24
 
             if shouldMerge {
                 current = "\(current) \(text)"
@@ -394,6 +467,115 @@ private extension PDFMenuParser {
         }
 
         return "Período não identificado"
+    }
+
+    func extractPeriodBounds(from periodLabel: String) -> (start: Date?, end: Date?) {
+        if let captures = firstMatch(
+            pattern: #"(?i)(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{2,4})\s*[Aa]\s*(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{2,4})"#,
+            in: periodLabel
+        ), captures.count == 6 {
+            let start = buildDate(day: captures[0], month: captures[1], year: captures[2])
+            let end = buildDate(day: captures[3], month: captures[4], year: captures[5])
+            return (start, end)
+        }
+
+        if let captures = firstMatch(
+            pattern: #"(?i)(\d{1,2})\s*[Aa]\s*(\d{1,2})\s*/\s*(\d{1,2})\s*/\s*(\d{2,4})"#,
+            in: periodLabel
+        ), captures.count == 4 {
+            let endDay = captures[1]
+            let month = captures[2]
+            let year = captures[3]
+            let start = buildDate(day: captures[0], month: month, year: year)
+            let end = buildDate(day: endDay, month: month, year: year)
+            return (start, end)
+        }
+
+        if let captures = firstMatch(
+            pattern: #"(?i)(\d{1,2})\s*[Aa]\s*(\d{1,2})\s+DE\s+([[:alpha:]çÇãÃõÕáÁéÉíÍóÓúÚâÂêÊôÔ]+)\s+DE\s+(\d{4})"#,
+            in: periodLabel
+        ), captures.count == 4 {
+            let startDay = Int(captures[0])
+            let endDay = Int(captures[1])
+            let month = monthNumber(fromPortugueseName: captures[2])
+            let year = Int(captures[3])
+
+            guard let startDay, let endDay, let month, let year else {
+                return (nil, nil)
+            }
+
+            let start = buildDate(day: startDay, month: month, year: year)
+            let end = buildDate(day: endDay, month: month, year: year)
+            return (start, end)
+        }
+
+        return (nil, nil)
+    }
+
+    func firstMatch(pattern: String, in text: String) -> [String]? {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        guard let match = regex.firstMatch(in: text, range: nsRange) else {
+            return nil
+        }
+
+        guard match.numberOfRanges > 1 else {
+            return nil
+        }
+
+        var captures: [String] = []
+        for index in 1..<match.numberOfRanges {
+            guard let range = Range(match.range(at: index), in: text) else {
+                return nil
+            }
+            captures.append(String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+
+        return captures
+    }
+
+    func buildDate(day: String, month: String, year: String) -> Date? {
+        guard let dayValue = Int(day), let monthValue = Int(month), let yearValue = Int(year) else {
+            return nil
+        }
+        return buildDate(day: dayValue, month: monthValue, year: yearValue)
+    }
+
+    func buildDate(day: Int, month: Int, year: Int) -> Date? {
+        let adjustedYear = year < 100 ? (2000 + year) : year
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.year = adjustedYear
+        components.month = month
+        components.day = day
+        components.hour = 12
+        return components.date
+    }
+
+    func monthNumber(fromPortugueseName monthName: String) -> Int? {
+        let normalized = monthName
+            .folding(options: [.diacriticInsensitive, .caseInsensitive], locale: Locale(identifier: "pt_BR"))
+            .lowercased()
+
+        let mapping: [String: Int] = [
+            "janeiro": 1,
+            "fevereiro": 2,
+            "marco": 3,
+            "abril": 4,
+            "maio": 5,
+            "junho": 6,
+            "julho": 7,
+            "agosto": 8,
+            "setembro": 9,
+            "outubro": 10,
+            "novembro": 11,
+            "dezembro": 12
+        ]
+
+        return mapping[normalized]
     }
 
     func normalizeRawText(_ text: String) -> String {
